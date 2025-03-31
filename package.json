@@ -4,9 +4,9 @@
   "description": "Tests for Dallas Mavericks players' 3-point shooting averages",
   "main": "nba.test.js",
   "scripts": {
-    "test": "playwright test --workers=1",
-    "test:headless": "cross-env HEADLESS=true playwright test --workers=1",
-    "test:ci": "playwright test --workers=1 --reporter=html,json",
+    "test": "playwright test",
+    "test:headless": "cross-env HEADLESS=true playwright test",
+    "test:ci": "cross-env HEADLESS=true playwright test --reporter=html,json",
     "report": "playwright show-report"
   },
   "keywords": [],

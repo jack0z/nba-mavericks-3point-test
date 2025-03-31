@@ -14,7 +14,20 @@ This project tests Dallas Mavericks players' 3-point shooting averages using Pla
    npx playwright install chromium
    ```
 
-3. Set up your SportsData API key as an environment variable:
+3. Set up your SportsData API key:
+   
+   Create a `.env` file in the project root with your API key:
+   ```
+   API_KEY=your_api_key_here
+   ```
+   
+   You can use the provided `.env.example` as a template:
+   ```bash
+   cp .env.example .env
+   # Then edit .env with your API key
+   ```
+
+   Alternatively, you can set it as an environment variable:
    ```bash
    # Windows
    SET API_KEY=your_api_key_here
@@ -22,8 +35,6 @@ This project tests Dallas Mavericks players' 3-point shooting averages using Pla
    # Linux/Mac
    export API_KEY=your_api_key_here
    ```
-   
-   Alternatively, you can set it in the run-test.bat file or create a `.env` file in the project root.
 
 ## Running Tests
 
@@ -43,22 +54,29 @@ npm run test:headless
 
 **Windows (PowerShell):**
 ```powershell
-# Run in headless mode (default)
+# Run in headless mode with 1 worker (default)
 .\run-test.ps1
 
-# Run with visible browser
+# Run with visible browser with 1 worker
 .\run-test.ps1 visible
 
-# Run with HTML reports and open them automatically
-.\run-test.ps1 report
+# Run with visible browser with 3 workers
+.\run-test.ps1 visible 3
 
-# Run in CI mode with reports (without opening)
-.\run-test.ps1 ci
+# Run with HTML reports and open them automatically (3 workers)
+.\run-test.ps1 report 3
+
+# Run in CI mode with reports (5 workers)
+.\run-test.ps1 ci 5
 ```
 
 **Windows (Batch):**
 ```bash
-run-test.bat  # Runs tests in headless mode with 1 worker
+# Run with 1 worker (default) in headless mode
+run-test.bat
+
+# Run with 4 workers in headless mode
+run-test.bat 4
 ```
 
 **Linux/Mac (Shell):**
@@ -66,17 +84,17 @@ run-test.bat  # Runs tests in headless mode with 1 worker
 # Make script executable (first time only)
 chmod +x run-test.sh
 
-# Run in headless mode (default)
+# Run in headless mode with 1 worker (default)
 ./run-test.sh
 
-# Run with visible browser
-./run-test.sh visible
+# Run with visible browser (2 workers)
+./run-test.sh visible 2
 
-# Run with HTML reports and open them automatically
-./run-test.sh report
+# Run with HTML reports (3 workers)
+./run-test.sh report 3
 
-# Run in CI mode with reports (without opening)
-./run-test.sh ci
+# Run in CI mode with reports (4 workers)
+./run-test.sh ci 4
 ```
 
 ### View Test Report
@@ -225,8 +243,12 @@ Passed: 10 | Failed: 7
 You can adjust test settings:
 
 - In `playwright.config.js` to modify browser settings, timeouts, and other Playwright options
-- In `run-test.bat` to modify the API key
-- Environment variables:
+- **Worker Count**: Control how many tests run in parallel:
+  - Specify workers directly in scripts: `run-test.bat 4` or `./run-test.sh visible 3`
+  - Set the `WORKERS` environment variable: `SET WORKERS=5` (Windows) or `export WORKERS=5` (Linux/Mac)
+  - Command line: `npx playwright test --workers=4`
+- **Environment Variables**:
   - `HEADLESS`: Set to "true" to run tests without showing the browser
+  - `WORKERS`: Set to a number to control how many parallel tests run
   - `API_KEY`: Your SportsData API key
 - In `nba.test.js` to update the `EXPECTED_PLAYER_COUNT` if the number of active Dallas players changes 

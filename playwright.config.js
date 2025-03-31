@@ -15,8 +15,8 @@ module.exports = defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   // Configure workers based on environment:
-  // Always use 1 worker to avoid rate limiting
-  workers: 1,
+  // Use environment variable WORKERS or default to 1
+  workers: parseInt(process.env.WORKERS || '1'),
   reporter: process.env.CI ? 
     [['html', { outputFolder: 'playwright-report' }], ['json', { outputFile: 'playwright-report/results.json' }]] : 
     'dot',

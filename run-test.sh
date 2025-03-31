@@ -3,20 +3,39 @@
 echo -e "\e[1;32mNBA Dallas Mavericks 3-Point Test\e[0m"
 echo -e "\e[1;32m==================================\e[0m"
 
-# API KEY Setup
-export API_KEY=58957574730c4ee1b809da2f53525997
+# Load API key from .env file if it exists
+if [ -f ".env" ]; then
+    echo -e "\e[90mLoading environment variables from .env file...\e[0m"
+    # Export API_KEY from .env file
+    export $(grep -v '^#' .env | grep "API_KEY" | xargs)
+else
+    echo -e "\e[33mWARNING: .env file not found. Please create one with your API_KEY.\e[0m"
+fi
 
-# Process command line argument
+# Check if API_KEY is set
+if [ -z "$API_KEY" ]; then
+    echo -e "\e[31mERROR: API_KEY is not set. Please create a .env file with your API key.\e[0m"
+    echo -e "\e[90mExample content for .env file:\e[0m"
+    echo -e "\e[90mAPI_KEY=your_api_key_here\e[0m"
+    exit 1
+fi
+
+# Process command line arguments
 mode=$1
+workers=${2:-1}  # Default to 1 worker if not specified
+
+# Set worker count
+export WORKERS=$workers
+echo -e "\e[1;33mUsing $workers worker(s)\e[0m"
 
 case "$mode" in
   "visible")
-    echo -e "\e[1;36mRunning test with visible browser (1 worker)...\e[0m"
+    echo -e "\e[1;36mRunning test with visible browser...\e[0m"
     # Run with visible browser (no HEADLESS env var)
     npm test
     ;;
   "report")
-    echo -e "\e[1;36mRunning test with HTML reports (1 worker)...\e[0m"
+    echo -e "\e[1;36mRunning test with HTML reports...\e[0m"
     export HEADLESS=true
     npm run test:ci
     # Open the report after completion
@@ -24,12 +43,12 @@ case "$mode" in
     npm run report
     ;;
   "ci")
-    echo -e "\e[1;36mRunning test in CI mode with reports (1 worker)...\e[0m"
+    echo -e "\e[1;36mRunning test in CI mode with reports...\e[0m"
     export HEADLESS=true
     npm run test:ci
     ;;
   *)
-    echo -e "\e[1;36mRunning test in headless mode (1 worker)...\e[0m"
+    echo -e "\e[1;36mRunning test in headless mode...\e[0m"
     export HEADLESS=true
     npm run test:headless
     ;;

@@ -2,27 +2,42 @@ require('dotenv').config();
 const { test, expect } = require('@playwright/test');
 const axios = require('axios');
 
-// Override console.log globally at the top level to avoid duplicate messages
-const originalConsoleLog = console.log;
-const seenMessages = new Set();
+// ===== GLOBAL STATE MANAGEMENT =====
+// Use a module-level state object to eliminate duplicates
+const state = {
+  // Track if messages have been logged
+  firstRunComplete: false,
+  
+  // Cache for API data
+  playerData: null,
+  playerCount: 0,
+  
+  // Results tracking
+  testResults: {
+    passed: [],
+    failed: []
+  }
+};
 
+// ===== PREVENT DUPLICATE LOGS =====
+// Replace the console.log BEFORE test execution
+const originalConsoleLog = console.log;
 console.log = function(...args) {
-    const message = args.join(' ');
-    
-    // Skip logging the following messages after we've seen them once
-    if (message.includes("Fetching Dallas Mavericks players from SportsData API") ||
-        message.includes("Found") && message.includes("active Dallas players") ||
-        message.includes("Setting up tests for") ||
-        message.includes("Running")) {
-        
-        if (seenMessages.has(message)) {
-            return; // Skip duplicate messages
-        }
-        seenMessages.add(message);
-    }
-    
-    // Forward to original console.log
-    originalConsoleLog.apply(console, args);
+  const message = args.join(' ');
+  
+  // Complete silence for these messages after first appearance
+  if (state.firstRunComplete && (
+    message.includes("Fetching") || 
+    message.includes("Found") || 
+    message.includes("Setting up") ||
+    message.includes("Running") ||
+    message.startsWith("===== STARTING")
+  )) {
+    return; // Skip duplicate logs completely
+  }
+  
+  // Always show other logs
+  originalConsoleLog.apply(console, args);
 };
 
 /**
@@ -31,36 +46,42 @@ console.log = function(...args) {
  */
 test.describe('Dallas Mavericks Players 3-Pointer Test', () => {
     
-    // Disable automatic retries for this test suite
+    // Hook that runs once before all tests
+    test.beforeAll(async () => {
+      // Pre-fetch players to ensure we only do this once
+      await getDallasPlayers();
+      
+      // Mark first run as complete after setup
+      if (!state.firstRunComplete) {
+        console.log(`Setting up tests for ${state.playerCount} players`);
+        
+        // Show our header
+        console.log(`\n===== STARTING TEST WITH ${state.playerCount} DALLAS MAVERICKS PLAYERS =====\n`);
+        
+        state.firstRunComplete = true;
+      }
+    });
+    
+    // Disable automatic retries 
     test.describe.configure({ retries: 0 });
-    
-    // Global flags to control logging
-    let hasLoggedFetching = false;
-    let hasLoggedFoundPlayers = false;
-    let hasLoggedSetupTests = false;
-    
-    // Shared cache and results tracking
-    let cachedPlayers = null;
-    const testResults = {
-        passed: [],
-        failed: []
-    };
     
     /**
      * Data provider function to fetch Dallas players from SportsData API
+     * This is now only called once in the entire test suite
      * @returns {Promise<Array>} Array of active Dallas players
      */
     async function getDallasPlayers() {
+        // If we already have the data, return it immediately
+        if (state.playerData !== null) {
+            return state.playerData;
+        }
+        
         try {
-            // Only log once
-            if (!hasLoggedFetching) {
-                console.log("Fetching Dallas Mavericks players from SportsData API...");
-                hasLoggedFetching = true;
-            }
+            console.log("Fetching Dallas Mavericks players from SportsData API...");
             
             // Check if API_KEY is defined
             if (!process.env.API_KEY) {
-                console.error("ERROR: API_KEY is not defined. Please set it in .env file or run-test.bat");
+                console.error("ERROR: API_KEY is not defined. Please set it in .env file or as environment variable");
                 throw new Error("API key is required");
             }
             
@@ -71,16 +92,19 @@ test.describe('Dallas Mavericks Players 3-Pointer Test', () => {
             // Filter for active players
             const activePlayers = response.data.filter(player => player.Status === 'Active');
             
-            // Only log once
-            if (!hasLoggedFoundPlayers && activePlayers.length > 0) {
+            if (activePlayers.length > 0) {
                 console.log(`Found ${activePlayers.length} active Dallas players.`);
-                hasLoggedFoundPlayers = true;
             }
             
             if (activePlayers.length === 0) {
                 console.error("ERROR: No active players found. API may have returned invalid data.");
                 throw new Error("No active players found");
             }
+            
+            // Store in state
+            state.playerData = activePlayers;
+            state.playerCount = activePlayers.length;
+            EXPECTED_PLAYER_COUNT = activePlayers.length;
             
             return activePlayers;
         } catch (error) {
@@ -268,57 +292,8 @@ test.describe('Dallas Mavericks Players 3-Pointer Test', () => {
         }
     }
 
-    // Fetch players only once and cache the result
-    async function getPlayersWithCache() {
-        if (!cachedPlayers) {
-            cachedPlayers = await getDallasPlayers();
-            
-            // Set player count immediately
-            EXPECTED_PLAYER_COUNT = cachedPlayers.length;
-            
-            // Only log once
-            if (!hasLoggedSetupTests) {
-                console.log(`Setting up tests for ${EXPECTED_PLAYER_COUNT} players`);
-                hasLoggedSetupTests = true;
-            }
-        }
-        return cachedPlayers;
-    }
-    
-    // Create a setup test that runs first to initialize player data
-    test.describe('Setup', () => {
-        test('Initialize player data', async () => {
-            // Get players to cache them for other tests
-            const players = await getPlayersWithCache();
-            
-            // Suppress Playwright output by overriding console.log
-            const originalLog = console.log;
-            console.log = function(...args) {
-                // Only display our custom output
-                const message = args.join(' ');
-                if (message.includes('[chromium]') || 
-                    message.includes('Running') ||
-                    message.includes('worker')) {
-                    return;
-                }
-                originalLog.apply(console, args);
-            };
-            
-            // Clear screen and show our header
-            console.clear();
-            process.stdout.write(`\n===== STARTING TEST WITH ${players.length} DALLAS MAVERICKS PLAYERS =====\n\n`);
-            expect(players.length).toBeGreaterThan(0);
-        });
-    });
-    
-    // Get player count immediately for test generation
+    // Use the cached player count
     let EXPECTED_PLAYER_COUNT = 20; // Default max player count
-
-    // Initialize player data immediately
-    getPlayersWithCache().catch(error => {
-        console.error('Failed to get player count:', error);
-        process.exit(1); // Exit with error if we can't get player data
-    });
     
     // Create tests for each player
     for (let i = 0; i < EXPECTED_PLAYER_COUNT; i++) {
@@ -326,8 +301,8 @@ test.describe('Dallas Mavericks Players 3-Pointer Test', () => {
         
         test.describe(`Player ${playerIndex + 1}`, () => {
             test(`Test`, async ({ page }) => {
-                // Get all players
-                const players = await getPlayersWithCache();
+                // Get all players from cache
+                const players = await getDallasPlayers();
                 
                 // Skip if this player doesn't exist
                 if (playerIndex >= players.length) {
@@ -352,41 +327,42 @@ test.describe('Dallas Mavericks Players 3-Pointer Test', () => {
                     // Use the new formatted output with player numbering
                     formatOutput(FirstName, LastName, NbaDotComPlayerID, average3PM, passed, playerIndex + 1);
                     
-                    // Record the result in our shared array
+                    // Record the result in the state object
                     if (passed) {
-                        testResults.passed.push(`${FirstName} ${LastName}`);
+                        state.testResults.passed.push(`${FirstName} ${LastName}`);
                     } else {
-                        testResults.failed.push(`${FirstName} ${LastName}`);
+                        state.testResults.failed.push(`${FirstName} ${LastName}`);
                     }
                 } catch (error) {
                     console.error(`Error processing ${FirstName} ${LastName}: ${error.message}`);
                     // Record error in our failed array
-                    testResults.failed.push(`${FirstName} ${LastName} (Error)`);
+                    state.testResults.failed.push(`${FirstName} ${LastName} (Error)`);
                 }
             });
         });
     }
     
-    // Add a summary test to run at the end
+    // Modify summary test to use state object
     test.describe('Summary', () => {
         test('Summary', async () => {
-            const players = await getPlayersWithCache();
+            // Reuse the cached player data
+            const players = await getDallasPlayers();
             
             // Display the results header
             process.stdout.write('\n===== TEST RESULTS SUMMARY =====\n');
             process.stdout.write(`Total players tested: ${players.length}\n`);
             
-            // Display summary of passed/failed players using our shared tracking array
-            process.stdout.write(`Passed: ${testResults.passed.length} | Failed: ${testResults.failed.length}\n`);
+            // Use the state object for results
+            process.stdout.write(`Passed: ${state.testResults.passed.length} | Failed: ${state.testResults.failed.length}\n`);
             
-            if (testResults.passed.length > 0) {
+            if (state.testResults.passed.length > 0) {
                 process.stdout.write('\n✅ Players that met criteria (3PM average >= 1):\n');
-                testResults.passed.forEach((player, idx) => process.stdout.write(`   ${idx+1}. ${player}\n`));
+                state.testResults.passed.forEach((player, idx) => process.stdout.write(`   ${idx+1}. ${player}\n`));
             }
             
-            if (testResults.failed.length > 0) {
+            if (state.testResults.failed.length > 0) {
                 process.stdout.write('\n❌ Players that failed to meet criteria:\n');
-                testResults.failed.forEach((player, idx) => process.stdout.write(`   ${idx+1}. ${player}\n`));
+                state.testResults.failed.forEach((player, idx) => process.stdout.write(`   ${idx+1}. ${player}\n`));
             }
             
             process.stdout.write('\n================================\n\n');
