@@ -1,0 +1,28 @@
+{
+  "name": "nba-mavericks-3point-test",
+  "version": "1.0.0",
+  "description": "Tests for Dallas Mavericks players' 3-point shooting averages",
+  "main": "nba.test.js",
+  "scripts": {
+    "test": "playwright test --workers=1",
+    "test:headless": "cross-env HEADLESS=true playwright test --workers=1",
+    "test:ci": "playwright test --workers=1 --reporter=html,json",
+    "report": "playwright show-report"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@playwright/test": "^1.30.0",
+    "axios": "^1.4.0",
+    "cross-env": "^7.0.3",
+    "dotenv": "^16.0.3",
+    "rimraf": "^5.0.10"
+  },
+  "dependencies": {
+    "playwright": "^1.51.1"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
