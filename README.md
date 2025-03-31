@@ -50,6 +50,11 @@ Run tests in headless mode (1 worker):
 npm run test:headless
 ```
 
+Run tests with parallel workers:
+```bash
+npm run test:parallel
+```
+
 ### Platform-Specific Scripts
 
 **Windows (PowerShell):**
@@ -108,7 +113,7 @@ This will open the HTML report in your default browser.
 
 ## CI/CD Integration
 
-The project is configured for CI/CD integration with a fixed setting of 1 worker to avoid rate limiting issues.
+The project is configured for CI/CD integration with GitHub Actions and other CI systems.
 
 To run the tests in a CI environment:
 ```bash
@@ -149,7 +154,7 @@ For Jenkins, GitLab CI, CircleCI, etc.:
 
 ## Project Structure
 
-- `nba.test.js` - Main test file
+- `nba.test.js` - Main test file with player tests and summary generation
 - `playwright.config.js` - Playwright configuration
 - `package.json` - Project configuration and scripts
 - `run-test.bat` - Convenience script for Windows (Batch)
@@ -175,8 +180,10 @@ The workflow:
 - Extracts 3PM statistics from the "Last 5 Games" table
 - Validates that each player's 3PM average for the last 5 games is >= 1
 - Displays clear, formatted output for each player test
-- Provides a summary report showing which players passed or failed
-- Falls back to sample data if API key is invalid or missing
+- Generates a comprehensive summary report showing which players passed or failed
+- Supports parallel test execution with multiple workers
+- Two-stage test approach: player tests first, then summary generation
+- Cross-platform script support (Windows, Linux, Mac)
 
 ## Requirements
 
@@ -188,7 +195,7 @@ The workflow:
 The test process:
 
 1. Fetches Dallas Mavericks players from the SportsData API
-2. Creates a separate test for each player
+2. Creates a separate test for each player (can run in parallel with multiple workers)
 3. For each player:
    - Navigates directly to their NBA.com profile page using their unique ID
    - Handles cookie consent if needed
@@ -197,10 +204,12 @@ The test process:
    - Extracts the 3PM values from each game
    - Calculates the average 3PM for the last 5 games
    - Displays the formatted result with colored pass/fail indicator
-4. Generates a summary report showing:
-   - Total number of players tested
-   - How many passed vs. failed
-   - Lists of players in each category
+   - Saves results to a shared file for later reporting
+4. After all player tests complete, the summary test:
+   - Collects all player results
+   - Sorts them for consistent display
+   - Generates a formatted summary report
+   - Validates that results were collected for at least half of the players
 
 ## Output Format
 
@@ -218,37 +227,83 @@ At the end, it produces a summary:
 ```
 ===== TEST RESULTS SUMMARY =====
 Total players tested: 17
+Results found: 17
 Passed: 10 | Failed: 7
 
 ✅ Players that met criteria (3PM average >= 1):
-   1. Luka Doncic
-   2. Kyrie Irving
-   ...
+   1. Dante Exum
+   2. Jaden Hardy
+   3. Kessler Edwards
+   4. Klay Thompson
+   5. Kyrie Irving
+   6. Luka Doncic
+   7. Max Christie
+   8. P.J. Washington
+   9. Spencer Dinwiddie
+   10. Tim Hardaway Jr.
 
 ❌ Players that failed to meet criteria:
-   1. Daniel Gafford
-   2. Josh Green
-   ...
+   1. Anthony Davis
+   2. Brandon Williams
+   3. Caleb Martin
+   4. Daniel Gafford
+   5. Dereck Lively II
+   6. Dwight Powell
+   7. Naji Marshall
+===================================
 ```
+
+## Advanced Features
+
+### Environment Variables
+
+- `API_KEY`: Your SportsData API key
+- `HEADLESS`: Set to "true" to run tests in headless mode
+- `WORKERS`: Number of parallel workers for tests
+- `FRESH_RESULTS`: Controls whether to initialize a fresh results file
+  - Set to "true" when starting player tests
+  - Set to "false" when running the summary test to preserve player results
+
+### How Parallel Testing Works
+
+The test framework uses a two-stage approach to support reliable parallel testing:
+
+1. **Player Tests Stage**: All player tests run in parallel (configurable worker count)
+   - Each test saves results to a shared JSON file
+   - File locking and retry logic prevent conflicts
+
+2. **Summary Stage**: A separate summary test runs after all player tests complete
+   - Reads the collected results
+   - Waits until results are available for all or most players
+   - Generates the final summary report
+
+This approach ensures reliable testing even with many parallel workers.
 
 ## Troubleshooting
 
 - **API Issues**: Ensure the API key is valid and check network connectivity
 - **NBA.com Structure Changes**: If NBA.com changes their website structure, the test might need to be updated to find the 3PM statistics correctly
 - **Network Issues**: Increase timeouts in the test or in the Playwright configuration if tests fail due to slow loading
-- **Headless Mode**: The test is configured to use headless mode in CI environments. You can run tests in headless mode locally with `npm run test:headless`
+- **Parallel Test Issues**: If running with many workers (>5), you might face API rate limiting. Consider reducing worker count.
+- **Missing Results**: If the summary report shows fewer players than expected, increase the timeout in the summary test
 
-## Configuration
+## Script Options
 
-You can adjust test settings:
+All platform scripts support the following modes:
 
-- In `playwright.config.js` to modify browser settings, timeouts, and other Playwright options
-- **Worker Count**: Control how many tests run in parallel:
-  - Specify workers directly in scripts: `run-test.bat 4` or `./run-test.sh visible 3`
-  - Set the `WORKERS` environment variable: `SET WORKERS=5` (Windows) or `export WORKERS=5` (Linux/Mac)
-  - Command line: `npx playwright test --workers=4`
-- **Environment Variables**:
-  - `HEADLESS`: Set to "true" to run tests without showing the browser
-  - `WORKERS`: Set to a number to control how many parallel tests run
-  - `API_KEY`: Your SportsData API key
-- In `nba.test.js` to update the `EXPECTED_PLAYER_COUNT` if the number of active Dallas players changes 
+- **default**: Runs in headless mode with specified workers
+- **visible**: Runs with visible browser (not headless)
+- **report**: Runs tests and generates HTML reports
+- **ci**: Runs in CI mode with HTML/JSON reports
+
+Example usage:
+```bash
+# Windows Batch
+run-test.bat 3            # Run with 3 workers in headless mode
+
+# PowerShell
+.\run-test.ps1 visible 2  # Run with 2 workers and visible browser
+
+# Linux/Mac
+./run-test.sh report 4    # Run with 4 workers and generate HTML report
+```

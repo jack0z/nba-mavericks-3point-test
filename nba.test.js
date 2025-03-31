@@ -1,412 +1,418 @@
 require('dotenv').config();
 const { test, expect } = require('@playwright/test');
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 
-// ===== GLOBAL STATE MANAGEMENT =====
-// Use a module-level state object to eliminate duplicates
+// File to store results across workers
+const RESULTS_FILE = path.resolve(path.join(__dirname, 'test-results.json'));
+
+// Global state management to eliminate duplicates
 const state = {
-  // Track if messages have been logged
-  firstRunComplete: false,
-  
-  // Cache for API data
   playerData: null,
   playerCount: 0,
-  
-  // Results tracking
-  testResults: {
-    passed: [],
-    failed: []
-  }
+  seenMessages: new Set()
 };
 
-// ===== PREVENT DUPLICATE LOGS =====
-// Replace the console.log BEFORE test execution
-const originalConsoleLog = console.log;
+// Setup global log management to prevent duplicates
+const originalLog = console.log;
 console.log = function(...args) {
   const message = args.join(' ');
   
-  // Complete silence for these messages after first appearance
-  if (state.firstRunComplete && (
-    message.includes("Fetching") || 
-    message.includes("Found") || 
-    message.includes("Setting up") ||
-    message.includes("Running") ||
-    message.startsWith("===== STARTING")
-  )) {
-    return; // Skip duplicate logs completely
+  if (message.includes("Fetching Dallas") || 
+      message.includes("Found") || 
+      message.includes("Setting up") ||
+      message.includes("Running") ||
+      message.includes("worker") ||
+      message.startsWith("===== STARTING")) {
+    
+    if (state.seenMessages.has(message)) {
+      return;
+    }
+    state.seenMessages.add(message);
   }
   
-  // Always show other logs
-  originalConsoleLog.apply(console, args);
+  originalLog.apply(console, args);
 };
 
 /**
- * Test to verify that Dallas Mavericks active players 
- * have a 3-pointer average >= 1 for the last 5 games
+ * Results file management functions
  */
-test.describe('Dallas Mavericks Players 3-Pointer Test', () => {
+function initializeResultsFile() {
+  try {
+    console.log(`Initializing results file at ${RESULTS_FILE}`);
+    const initialData = {
+      timestamp: new Date().toISOString(),
+      passed: [],
+      failed: []
+    };
+    fs.writeFileSync(RESULTS_FILE, JSON.stringify(initialData, null, 2));
+    console.log('Results file initialized successfully');
+  } catch (error) {
+    console.error(`Error initializing results file: ${error.message}`);
+  }
+}
+
+function saveResult(playerName, passed) {
+  try {
+    let retries = 5;
+    let success = false;
     
-    // Hook that runs once before all tests
-    test.beforeAll(async () => {
-      // Pre-fetch players to ensure we only do this once
-      await getDallasPlayers();
-      
-      // Mark first run as complete after setup
-      if (!state.firstRunComplete) {
-        console.log(`Setting up tests for ${state.playerCount} players`);
+    while (retries > 0 && !success) {
+      try {
+        let results = { passed: [], failed: [] };
         
-        // Show our header
-        console.log(`\n===== STARTING TEST WITH ${state.playerCount} DALLAS MAVERICKS PLAYERS =====\n`);
+        if (fs.existsSync(RESULTS_FILE)) {
+          const content = fs.readFileSync(RESULTS_FILE, 'utf8');
+          try {
+            results = JSON.parse(content);
+          } catch (parseError) {
+            console.error(`Error parsing results file: ${parseError.message}`);
+            results = { timestamp: new Date().toISOString(), passed: [], failed: [] };
+          }
+        }
         
-        state.firstRunComplete = true;
+        if (passed) {
+          if (!results.passed.includes(playerName)) {
+            results.passed.push(playerName);
+          }
+        } else {
+          if (!results.failed.includes(playerName)) {
+            results.failed.push(playerName);
+          }
+        }
+        
+        fs.writeFileSync(RESULTS_FILE, JSON.stringify(results, null, 2));
+        success = true;
+      } catch (writeError) {
+        console.error(`Error writing results (retry ${5-retries+1}/5): ${writeError.message}`);
+        retries--;
+        setTimeout(() => {}, 100);
       }
-    });
-    
-    // Disable automatic retries 
-    test.describe.configure({ retries: 0 });
-    
-    /**
-     * Data provider function to fetch Dallas players from SportsData API
-     * This is now only called once in the entire test suite
-     * @returns {Promise<Array>} Array of active Dallas players
-     */
-    async function getDallasPlayers() {
-        // If we already have the data, return it immediately
-        if (state.playerData !== null) {
-            return state.playerData;
-        }
-        
-        try {
-            console.log("Fetching Dallas Mavericks players from SportsData API...");
-            
-            // Check if API_KEY is defined
-            if (!process.env.API_KEY) {
-                console.error("ERROR: API_KEY is not defined. Please set it in .env file or as environment variable");
-                throw new Error("API key is required");
-            }
-            
-            const response = await axios.get(
-                `https://api.sportsdata.io/v3/nba/scores/json/Players/DAL?key=${process.env.API_KEY}`
-            );
-            
-            // Filter for active players
-            const activePlayers = response.data.filter(player => player.Status === 'Active');
-            
-            if (activePlayers.length > 0) {
-                console.log(`Found ${activePlayers.length} active Dallas players.`);
-            }
-            
-            if (activePlayers.length === 0) {
-                console.error("ERROR: No active players found. API may have returned invalid data.");
-                throw new Error("No active players found");
-            }
-            
-            // Store in state
-            state.playerData = activePlayers;
-            state.playerCount = activePlayers.length;
-            EXPECTED_PLAYER_COUNT = activePlayers.length;
-            
-            return activePlayers;
-        } catch (error) {
-            console.error('Error fetching Dallas players:', error.message);
-            throw error; // Fail the test if we can't get player data
-        }
-    }
-
-    /**
-     * Function to extract 3PM (3-pointer) average for the last 5 games from NBA.com
-     * @param {Object} page - Playwright page object
-     * @param {string} firstName - Player's first name
-     * @param {string} lastName - Player's last name
-     * @param {number} nbaDotComPlayerId - Player's NBA.com ID
-     * @returns {Promise<number>} Average 3PM from last 5 games
-     */
-    async function get3PointAverageFromNBA(page, firstName, lastName, nbaDotComPlayerId) {
-        let playerName = `${firstName} ${lastName}`;
-
-        try {
-            // Navigate directly to player's profile using their ID
-            await page.goto(`https://www.nba.com/player/${nbaDotComPlayerId}`, { timeout: 30000 });
-            await page.waitForLoadState('domcontentloaded', { timeout: 20000 });
-            
-            // Handle cookie consent if present
-            try {
-                const cookieButton = await page.waitForSelector('button[id="onetrust-accept-btn-handler"]', { timeout: 3000 });
-                if (cookieButton) {
-                    await cookieButton.click();
-                }
-            } catch (e) {
-                // Cookie banner might not appear
-            }
-            
-            // Navigate to Profile tab if not already there
-            try {
-                const profileTab = await page.waitForSelector('a:has-text("Profile")', { timeout: 3000 });
-                if (profileTab) {
-                    await profileTab.click();
-                    await page.waitForLoadState('networkidle', { timeout: 15000 });
-                }
-            } catch (e) {
-                // Profile tab might already be active
-            }
-            
-            // Find the "Last 5 Games" table and extract 3PM data
-            await page.waitForTimeout(1000); // Give page time to fully render
-            
-            // Extract 3PM data from tables
-            const threePointAverage = await page.evaluate(() => {
-                console.log('Searching for Last 5 Games table...');
-                
-                // Look for the table with "Last 5 Games" caption or nearby heading
-                let lastFiveGamesTable = null;
-                
-                // Method 1: Find by looking directly at table content or surrounding elements
-                const tablesAndHeaders = [...document.querySelectorAll('table, h2, h3, h4, div')];
-                
-                for (const element of tablesAndHeaders) {
-                    if (element.textContent.includes('Last 5 Games')) {
-                        console.log('Found element with "Last 5 Games" text');
-                        
-                        // If it's a table, use it directly
-                        if (element.tagName === 'TABLE') {
-                            lastFiveGamesTable = element;
-                            break;
-                        }
-                        
-                        // If it's a header or div, look for a table following it
-                        let sibling = element.nextElementSibling;
-                        while (sibling) {
-                            if (sibling.tagName === 'TABLE') {
-                                lastFiveGamesTable = sibling;
-                                break;
-                            }
-                            sibling = sibling.nextElementSibling;
-                        }
-                        
-                        // If not found as next sibling, look inside the element
-                        if (!lastFiveGamesTable) {
-                            const nestedTable = element.querySelector('table');
-                            if (nestedTable) {
-                                lastFiveGamesTable = nestedTable;
-                            }
-                        }
-                        
-                        // If still not found, look for any table within the parent container
-                        if (!lastFiveGamesTable && element.parentElement) {
-                            const parentTable = element.parentElement.querySelector('table');
-                            if (parentTable) {
-                                lastFiveGamesTable = parentTable;
-                            }
-                        }
-                        
-                        if (lastFiveGamesTable) break;
-                    }
-                }
-                
-                // Method 2: If we still don't have a table, look for any table with 3PM column
-                if (!lastFiveGamesTable) {
-                    console.log('Searching for any table with 3PM column...');
-                    const tables = document.querySelectorAll('table');
-                    
-                    for (const table of tables) {
-                        const headerRow = table.querySelector('tr');
-                        if (headerRow) {
-                            const headers = headerRow.querySelectorAll('th');
-                            for (const header of headers) {
-                                if (header.textContent.includes('3PM')) {
-                                    lastFiveGamesTable = table;
-                                    break;
-                                }
-                            }
-                        }
-                        if (lastFiveGamesTable) break;
-                    }
-                }
-                
-                if (!lastFiveGamesTable) {
-                    console.log('Could not find a table with 3PM data');
-                    return null;
-                }
-                
-                // Find the 3PM column index
-                const headerCells = lastFiveGamesTable.querySelectorAll('th');
-                let threePMColumnIndex = -1;
-                
-                for (let i = 0; i < headerCells.length; i++) {
-                    const headerText = headerCells[i].textContent.trim();
-                    if (headerText === '3PM' || headerText.includes('3PM')) {
-                        threePMColumnIndex = i;
-                        break;
-                    }
-                }
-                
-                if (threePMColumnIndex === -1) {
-                    console.log('Could not find 3PM column in table');
-                    return null;
-                }
-                
-                // Extract 3PM values from the table rows
-                const rows = lastFiveGamesTable.querySelectorAll('tbody tr');
-                if (rows.length === 0) {
-                    console.log('No rows found in table');
-                    return null;
-                }
-                
-                let sum = 0;
-                let count = 0;
-                
-                // Get values from up to 5 rows
-                const numRows = Math.min(rows.length, 5);
-                for (let i = 0; i < numRows; i++) {
-                    const cells = rows[i].querySelectorAll('td');
-                    if (cells.length > threePMColumnIndex) {
-                        const valueText = cells[threePMColumnIndex].textContent.trim();
-                        const value = parseFloat(valueText);
-                        if (!isNaN(value)) {
-                            sum += value;
-                            count++;
-                            console.log(`Game ${i+1}: ${value} 3PM`);
-                        }
-                    }
-                }
-                
-                if (count === 0) {
-                    console.log('No valid 3PM values found');
-                    return null;
-                }
-                
-                const average = sum / count;
-                console.log(`Average 3PM: ${average.toFixed(2)} (${count} games)`);
-                return average;
-            });
-            
-            if (threePointAverage === null) {
-                throw new Error(`Could not extract 3PM data for ${playerName}`);
-            }
-            
-            return threePointAverage;
-            
-        } catch (error) {
-            console.error(`Error processing ${playerName}: ${error.message}`);
-            throw error; // Propagate the error to fail the test properly
-        }
-    }
-
-    // Use the cached player count
-    let EXPECTED_PLAYER_COUNT = 20; // Default max player count
-    
-    // Create tests for each player
-    for (let i = 0; i < EXPECTED_PLAYER_COUNT; i++) {
-        const playerIndex = i;
-        
-        test.describe(`Player ${playerIndex + 1}`, () => {
-            test(`Test`, async ({ page }) => {
-                // Get all players from cache
-                const players = await getDallasPlayers();
-                
-                // Skip if this player doesn't exist
-                if (playerIndex >= players.length) {
-                    test.skip();
-                    return;
-                }
-                
-                // Configure page for better stability
-                await page.setViewportSize({ width: 1920, height: 1080 });
-                
-                // Get the player data
-                const player = players[playerIndex];
-                const { FirstName, LastName, NbaDotComPlayerID } = player;
-                
-                try {
-                    // Process the player
-                    const average3PM = await get3PointAverageFromNBA(page, FirstName, LastName, NbaDotComPlayerID);
-                    
-                    // Record and assert results
-                    const passed = average3PM >= 1;
-                    
-                    // Use the new formatted output with player numbering
-                    formatOutput(FirstName, LastName, NbaDotComPlayerID, average3PM, passed, playerIndex + 1);
-                    
-                    // Record the result in the state object
-                    if (passed) {
-                        state.testResults.passed.push(`${FirstName} ${LastName}`);
-                    } else {
-                        state.testResults.failed.push(`${FirstName} ${LastName}`);
-                    }
-                } catch (error) {
-                    console.error(`Error processing ${FirstName} ${LastName}: ${error.message}`);
-                    // Record error in our failed array
-                    state.testResults.failed.push(`${FirstName} ${LastName} (Error)`);
-                }
-            });
-        });
     }
     
-    // Modify summary test to use state object
-    test.describe('Summary', () => {
-        test('Summary', async () => {
-            // Reuse the cached player data
-            const players = await getDallasPlayers();
-            
-            // Display the results header
-            process.stdout.write('\n===== TEST RESULTS SUMMARY =====\n');
-            process.stdout.write(`Total players tested: ${players.length}\n`);
-            
-            // Use the state object for results
-            process.stdout.write(`Passed: ${state.testResults.passed.length} | Failed: ${state.testResults.failed.length}\n`);
-            
-            if (state.testResults.passed.length > 0) {
-                process.stdout.write('\n✅ Players that met criteria (3PM average >= 1):\n');
-                state.testResults.passed.forEach((player, idx) => process.stdout.write(`   ${idx+1}. ${player}\n`));
-            }
-            
-            if (state.testResults.failed.length > 0) {
-                process.stdout.write('\n❌ Players that failed to meet criteria:\n');
-                state.testResults.failed.forEach((player, idx) => process.stdout.write(`   ${idx+1}. ${player}\n`));
-            }
-            
-            process.stdout.write('\n================================\n\n');
-        });
-    });
-});
+    if (!success) {
+      console.error(`Failed to save result for ${playerName} after multiple attempts`);
+    }
+  } catch (error) {
+    console.error(`Error in saveResult: ${error.message}`);
+  }
+}
 
-/**
- * Format the output for a player's test result
- * @param {string} firstName - Player's first name
- * @param {string} lastName - Player's last name
- * @param {number} playerId - Player's NBA.com ID
- * @param {number} average3PM - Player's 3PM average
- * @param {boolean} passed - Whether the player passed the test
- * @param {number} playerNumber - Player's number in the test sequence
- * @returns {Object} Test result object
- */
-function formatOutput(firstName, lastName, playerId, average3PM, passed, playerNumber) {
-    const playerName = `${firstName} ${lastName}`;
-    const averageFormatted = average3PM.toFixed(2);
+function getResults() {
+  try {
+    if (fs.existsSync(RESULTS_FILE)) {
+      const content = fs.readFileSync(RESULTS_FILE, 'utf8');
+      try {
+        return JSON.parse(content);
+      } catch (parseError) {
+        console.error(`Error parsing results JSON: ${parseError.message}`);
+        return { timestamp: new Date().toISOString(), passed: [], failed: [] };
+      }
+    }
+  } catch (error) {
+    console.error(`Error reading results file: ${error.message}`);
+  }
+  return { timestamp: new Date().toISOString(), passed: [], failed: [] };
+}
+
+test.describe('Dallas Mavericks Players 3-Pointer Test', () => {
+  
+  async function getPlayers() {
+    if (state.playerData !== null) {
+      return state.playerData;
+    }
     
-    // Bold and color formatting
-    const bold = "\x1b[1m";
-    const reset = "\x1b[0m";
-    const green = "\x1b[32m";
-    const red = "\x1b[31m";
-    const passText = passed ? `${green}${bold}PASS${reset}` : `${red}${bold}FAIL${reset}`;
+    console.log("Fetching Dallas Mavericks players from SportsData API...");
     
     try {
-        // Use a direct write to console without any extra formatting
-        // This eliminates the special character issue
-        process.stdout.write("-----------------------------------\n");
-        process.stdout.write(`${playerNumber}. ${playerName} (${playerId})\n`);
-        process.stdout.write(`   - 3PM Average: ${averageFormatted}\n`);
-        process.stdout.write(`   - Result: ${passText}\n`);
-        process.stdout.write("-----------------------------------\n");
-    } catch (e) {
-        // Ignore write errors
+      if (!process.env.API_KEY) {
+        console.error("ERROR: API_KEY not defined. Set it in .env file or environment variable");
+        throw new Error("API key required");
+      }
+      
+      const response = await axios.get(
+        `https://api.sportsdata.io/v3/nba/scores/json/Players/DAL?key=${process.env.API_KEY}`
+      );
+      
+      const players = response.data.filter(player => player.Status === 'Active');
+      console.log(`Found ${players.length} active Dallas players.`);
+      
+      if (players.length === 0) {
+        throw new Error("No active players found");
+      }
+      
+      state.playerData = players;
+      state.playerCount = players.length;
+      
+      console.log(`Setting up tests for ${state.playerCount} players`);
+      console.log(`\n===== STARTING TEST WITH ${state.playerCount} DALLAS MAVERICKS PLAYERS =====\n`);
+      
+      return players;
+    } catch (error) {
+      console.error(`Error fetching players: ${error.message}`);
+      throw error;
+    }
+  }
+  
+  test.beforeAll(async () => {
+    state.seenMessages.clear();
+    
+    const shouldInitialize = process.env.FRESH_RESULTS === 'true' || !fs.existsSync(RESULTS_FILE);
+    
+    if (shouldInitialize) {
+      initializeResultsFile();
+    } else {
+      console.log('Using existing results file for summary report');
     }
     
-    // Return result for summary tracking
-    return {
-        name: playerName,
-        average: average3PM,
-        pass: passed
+    await getPlayers();
+  });
+  
+  for (let playerIndex = 0; playerIndex < 20; playerIndex++) {
+    test(`Player ${playerIndex + 1}`, async ({ page }) => {
+      const players = await getPlayers();
+      
+      if (playerIndex >= players.length) {
+        test.skip();
+        return;
+      }
+      
+      const player = players[playerIndex];
+      const { FirstName, LastName, NbaDotComPlayerID } = player;
+      const playerName = `${FirstName} ${LastName}`;
+      
+      await page.setViewportSize({ width: 1920, height: 1080 });
+      
+      try {
+        const average3PM = await get3PointAverageFromNBA(
+          page, FirstName, LastName, NbaDotComPlayerID
+        );
+        
+        const passed = average3PM >= 1;
+        formatOutput(FirstName, LastName, NbaDotComPlayerID, average3PM, passed, playerIndex + 1);
+        saveResult(playerName, passed);
+        expect(average3PM).not.toBeNull();
+      } catch (error) {
+        console.error(`Error processing ${FirstName} ${LastName}: ${error.message}`);
+        saveResult(`${playerName} (Error)`, false);
+        throw error;
+      }
+    });
+  }
+  
+  test('ZZZ_Summary Report @summary', async () => {
+    const players = await getPlayers();
+    const expectedResultCount = players.length;
+    
+    console.log(`Waiting for all ${expectedResultCount} player results before generating summary...`);
+    
+    let results = { passed: [], failed: [] };
+    const startTime = Date.now();
+    const maxWaitTime = 90000;
+    
+    while (Date.now() - startTime < maxWaitTime) {
+      results = getResults();
+      const currentResultCount = results.passed.length + results.failed.length;
+      
+      if (currentResultCount >= expectedResultCount) {
+        console.log(`All ${currentResultCount}/${expectedResultCount} results collected.`);
+        break;
+      }
+      
+      if (currentResultCount > 0) {
+        console.log(`Collected ${currentResultCount}/${expectedResultCount} results so far...`);
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    
+    const sortedResults = {
+      passed: [...results.passed].sort(),
+      failed: [...results.failed].sort()
     };
+    
+    process.stdout.write('\n===== TEST RESULTS SUMMARY =====\n');
+    process.stdout.write(`Total players tested: ${players.length}\n`);
+    process.stdout.write(`Results found: ${sortedResults.passed.length + sortedResults.failed.length}\n`);
+    process.stdout.write(`Passed: ${sortedResults.passed.length} | Failed: ${sortedResults.failed.length}\n`);
+    
+    if (sortedResults.passed.length > 0) {
+      process.stdout.write('\n✅ Players that met criteria (3PM average >= 1):\n');
+      sortedResults.passed.forEach((player, idx) => 
+        process.stdout.write(`   ${idx+1}. ${player}\n`)
+      );
+    }
+    
+    if (sortedResults.failed.length > 0) {
+      process.stdout.write('\n❌ Players that failed to meet criteria:\n');
+      sortedResults.failed.forEach((player, idx) => 
+        process.stdout.write(`   ${idx+1}. ${player}\n`)
+      );
+    }
+    
+    process.stdout.write('\n================================\n\n');
+    
+    expect(sortedResults.passed.length + sortedResults.failed.length).toBeGreaterThanOrEqual(Math.floor(expectedResultCount / 2));
+  }, { timeout: 120000 });
+  
+  async function get3PointAverageFromNBA(page, firstName, lastName, nbaDotComPlayerId) {
+    const playerName = `${firstName} ${lastName}`;
+    
+    try {
+      await page.goto(`https://www.nba.com/player/${nbaDotComPlayerId}`, { timeout: 30000 });
+      await page.waitForLoadState('domcontentloaded', { timeout: 20000 });
+      
+      try {
+        const cookieButton = await page.waitForSelector('button[id="onetrust-accept-btn-handler"]', { timeout: 3000 });
+        if (cookieButton) {
+          await cookieButton.click();
+        }
+      } catch (e) {
+        // Cookie banner might not appear
+      }
+      
+      try {
+        const profileTab = await page.waitForSelector('a:has-text("Profile")', { timeout: 3000 });
+        if (profileTab) {
+          await profileTab.click();
+          await page.waitForLoadState('networkidle', { timeout: 15000 });
+        }
+      } catch (e) {
+        // Profile tab might already be active
+      }
+      
+      await page.waitForTimeout(1000);
+      
+      const threePointAverage = await page.evaluate(() => {
+        console.log('Searching for Last 5 Games table...');
+        
+        let lastFiveGamesTable = null;
+        const elements = [...document.querySelectorAll('table, h2, h3, h4, div')];
+        
+        for (const element of elements) {
+          if (element.textContent.includes('Last 5 Games')) {
+            console.log('Found element with "Last 5 Games" text');
+            
+            if (element.tagName === 'TABLE') {
+              lastFiveGamesTable = element;
+              break;
+            }
+            
+            let sibling = element.nextElementSibling;
+            while (sibling) {
+              if (sibling.tagName === 'TABLE') {
+                lastFiveGamesTable = sibling;
+                break;
+              }
+              sibling = sibling.nextElementSibling;
+            }
+            
+            if (!lastFiveGamesTable) {
+              lastFiveGamesTable = element.querySelector('table') || 
+                                  (element.parentElement && element.parentElement.querySelector('table'));
+            }
+            
+            if (lastFiveGamesTable) break;
+          }
+        }
+        
+        if (!lastFiveGamesTable) {
+          console.log('Searching for any table with 3PM column...');
+          for (const table of document.querySelectorAll('table')) {
+            const headerRow = table.querySelector('tr');
+            if (headerRow && [...headerRow.querySelectorAll('th')].some(h => h.textContent.includes('3PM'))) {
+              lastFiveGamesTable = table;
+              break;
+            }
+          }
+        }
+        
+        if (!lastFiveGamesTable) {
+          console.log('Could not find a table with 3PM data');
+          return null;
+        }
+        
+        const headerCells = lastFiveGamesTable.querySelectorAll('th');
+        let threePMColumnIndex = -1;
+        
+        for (let i = 0; i < headerCells.length; i++) {
+          if (headerCells[i].textContent.trim().includes('3PM')) {
+            threePMColumnIndex = i;
+            break;
+          }
+        }
+        
+        if (threePMColumnIndex === -1) {
+          console.log('Could not find 3PM column in table');
+          return null;
+        }
+        
+        const rows = lastFiveGamesTable.querySelectorAll('tbody tr');
+        if (rows.length === 0) {
+          console.log('No rows found in table');
+          return null;
+        }
+        
+        let sum = 0;
+        let count = 0;
+        
+        const numRows = Math.min(rows.length, 5);
+        for (let i = 0; i < numRows; i++) {
+          const cells = rows[i].querySelectorAll('td');
+          if (cells.length > threePMColumnIndex) {
+            const valueText = cells[threePMColumnIndex].textContent.trim();
+            const value = parseFloat(valueText);
+            if (!isNaN(value)) {
+              sum += value;
+              count++;
+              console.log(`Game ${i+1}: ${value} 3PM`);
+            }
+          }
+        }
+        
+        if (count === 0) {
+          console.log('No valid 3PM values found');
+          return null;
+        }
+        
+        const average = sum / count;
+        console.log(`Average 3PM: ${average.toFixed(2)} (${count} games)`);
+        return average;
+      });
+      
+      if (threePointAverage === null) {
+        throw new Error(`Could not extract 3PM data for ${playerName}`);
+      }
+      
+      return threePointAverage;
+      
+    } catch (error) {
+      console.error(`Error processing ${playerName}: ${error.message}`);
+      throw error;
+    }
+  }
+});
+
+function formatOutput(firstName, lastName, playerId, average3PM, passed, playerNumber) {
+  const playerName = `${firstName} ${lastName}`;
+  const averageFormatted = average3PM.toFixed(2);
+  
+  const bold = "\x1b[1m";
+  const reset = "\x1b[0m";
+  const green = "\x1b[32m";
+  const red = "\x1b[31m";
+  const passText = passed ? `${green}${bold}PASS${reset}` : `${red}${bold}FAIL${reset}`;
+  
+  try {
+    process.stdout.write("-----------------------------------\n");
+    process.stdout.write(`${playerNumber}. ${playerName} (${playerId})\n`);
+    process.stdout.write(`   - 3PM Average: ${averageFormatted}\n`);
+    process.stdout.write(`   - Result: ${passText}\n`);
+    process.stdout.write("-----------------------------------\n");
+  } catch (e) {
+    // Ignore write errors
+  }
+  
+  return { name: playerName, average: average3PM, pass: passed };
 }

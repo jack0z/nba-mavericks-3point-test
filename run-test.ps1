@@ -1,5 +1,5 @@
 Write-Host "NBA Dallas Mavericks 3-Point Test" -ForegroundColor Green
-Write-Host "==================================" -ForegroundColor Green
+Write-Host "====================================" -ForegroundColor Green
 
 # Load API key from .env file if it exists
 if (Test-Path -Path ".env") {
@@ -32,29 +32,52 @@ $workerCount = if ($args.Length -gt 1) { $args[1] } else { 1 }
 $env:WORKERS = $workerCount
 Write-Host "Using $workerCount worker(s)" -ForegroundColor Yellow
 
+# Special variable to indicate if we should create a fresh results file
+$env:FRESH_RESULTS = "true"
+
 switch ($testMode) {
     "visible" {
         Write-Host "Running test with visible browser..." -ForegroundColor Cyan
         # No HEADLESS env var means visible browser
-        npm test
+        # First run player tests
+        npx playwright test --grep-invert "@summary" --workers=$workerCount
+        # Now keep the results file for summary
+        $env:FRESH_RESULTS = "false"
+        Write-Host "Generating final summary report..." -ForegroundColor Cyan
+        npx playwright test --grep "@summary" --workers=1
     }
     "report" {
         Write-Host "Running test with HTML reports..." -ForegroundColor Cyan
         $env:HEADLESS = "true"
-        npm run test:ci
+        # First run player tests
+        npx playwright test --grep-invert "@summary" --workers=$workerCount --reporter=html,json
+        # Now keep the results file for summary
+        $env:FRESH_RESULTS = "false"
+        Write-Host "Generating final summary report..." -ForegroundColor Cyan
+        npx playwright test --grep "@summary" --workers=1 --reporter=html,json
         # Open the report after completion
         Write-Host "Opening test report..." -ForegroundColor Cyan
-        npm run report
+        npx playwright show-report
     }
     "ci" {
         Write-Host "Running test in CI mode with reports..." -ForegroundColor Cyan
         $env:HEADLESS = "true"
-        npm run test:ci
+        # First run player tests
+        npx playwright test --grep-invert "@summary" --workers=$workerCount --reporter=html,json
+        # Now keep the results file for summary
+        $env:FRESH_RESULTS = "false"
+        Write-Host "Generating final summary report..." -ForegroundColor Cyan
+        npx playwright test --grep "@summary" --workers=1 --reporter=html,json
     }
     default {
         Write-Host "Running test in headless mode..." -ForegroundColor Cyan
         $env:HEADLESS = "true"
-        npm run test:headless
+        # First run player tests
+        npx playwright test --grep-invert "@summary" --workers=$workerCount
+        # Now keep the results file for summary
+        $env:FRESH_RESULTS = "false"
+        Write-Host "Generating final summary report..." -ForegroundColor Cyan
+        npx playwright test --grep "@summary" --workers=1
     }
 }
 

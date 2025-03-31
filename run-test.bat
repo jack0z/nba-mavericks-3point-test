@@ -23,7 +23,7 @@ IF "%API_KEY%"=="" (
 :: Enable headless mode for CI
 SET HEADLESS=true
 
-:: Set workers based on parameter (default to 1 if not provided)
+:: Set worker count based on parameter (default to 1 if not provided)
 IF "%1"=="" (
   SET WORKERS=1
 ) ELSE (
@@ -33,12 +33,23 @@ IF "%1"=="" (
 :: Display worker count
 ECHO Using %WORKERS% worker(s)
 
+:: Special variable to indicate if we should create a fresh results file
+SET FRESH_RESULTS=true
+
 :: Show a message that test is running
 ECHO Running tests, please wait...
 ECHO.
 
-:: Run the test directly with the specified worker count
-npx playwright test --workers=%WORKERS%
+:: First run the player tests with multiple workers (skip summary test)
+call npx playwright test --grep-invert "@summary" --workers=%WORKERS%
+
+:: Now we want to keep the results file for the summary
+SET FRESH_RESULTS=false
+
+:: Then run the summary test with a single worker to ensure consistent output
+ECHO.
+ECHO Generating final summary report...
+call npx playwright test --grep "@summary" --workers=1
 
 ECHO.
 ECHO Test complete! 

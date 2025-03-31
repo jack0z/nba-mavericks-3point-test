@@ -28,29 +28,50 @@ workers=${2:-1}  # Default to 1 worker if not specified
 export WORKERS=$workers
 echo -e "\e[1;33mUsing $workers worker(s)\e[0m"
 
+# Special variable to indicate if we should create a fresh results file
+export FRESH_RESULTS=true
+
 case "$mode" in
   "visible")
     echo -e "\e[1;36mRunning test with visible browser...\e[0m"
     # Run with visible browser (no HEADLESS env var)
-    npm test
+    npx playwright test --grep-invert "@summary" --workers=$workers
+    export FRESH_RESULTS=false
+    echo -e "\e[1;36mGenerating final summary report...\e[0m"
+    npx playwright test --grep "@summary" --workers=1
     ;;
   "report")
     echo -e "\e[1;36mRunning test with HTML reports...\e[0m"
     export HEADLESS=true
-    npm run test:ci
+    # First run player tests
+    npx playwright test --grep-invert "@summary" --workers=$workers --reporter=html,json
+    export FRESH_RESULTS=false
+    # Then run summary
+    echo -e "\e[1;36mGenerating final summary report...\e[0m"
+    npx playwright test --grep "@summary" --workers=1 --reporter=html,json
     # Open the report after completion
     echo -e "\e[1;36mOpening test report...\e[0m"
-    npm run report
+    npx playwright show-report
     ;;
   "ci")
     echo -e "\e[1;36mRunning test in CI mode with reports...\e[0m"
     export HEADLESS=true
-    npm run test:ci
+    # First run player tests
+    npx playwright test --grep-invert "@summary" --workers=$workers --reporter=html,json
+    export FRESH_RESULTS=false
+    # Then run summary
+    echo -e "\e[1;36mGenerating final summary report...\e[0m"
+    npx playwright test --grep "@summary" --workers=1 --reporter=html,json
     ;;
   *)
     echo -e "\e[1;36mRunning test in headless mode...\e[0m"
     export HEADLESS=true
-    npm run test:headless
+    # First run player tests
+    npx playwright test --grep-invert "@summary" --workers=$workers
+    export FRESH_RESULTS=false
+    # Then run summary
+    echo -e "\e[1;36mGenerating final summary report...\e[0m"
+    npx playwright test --grep "@summary" --workers=1
     ;;
 esac
 

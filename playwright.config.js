@@ -2,6 +2,22 @@
 const { defineConfig, devices } = require('@playwright/test');
 
 /**
+ * Create multiple projects for parallel execution
+ * @param {number} count Number of projects to create
+ * @returns {Array} Array of project configs
+ */
+function createParallelProjects(count = 1) {
+  const projects = [];
+  for (let i = 0; i < count; i++) {
+    projects.push({
+      name: `chromium-${i + 1}`,
+      use: { ...devices['Desktop Chrome'] },
+    });
+  }
+  return projects;
+}
+
+/**
  * @see https://playwright.dev/docs/test-configuration
  */
 module.exports = defineConfig({
@@ -11,12 +27,11 @@ module.exports = defineConfig({
   expect: {
     timeout: 10000
   },
-  fullyParallel: false,
+  fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  // Configure workers based on environment:
-  // Use environment variable WORKERS or default to 1
-  workers: parseInt(process.env.WORKERS || '1'),
+  // Allow multiple workers to run in parallel
+  workers: parseInt(process.env.PROJECTS || '1', 10),
   reporter: process.env.CI ? 
     [['html', { outputFolder: 'playwright-report' }], ['json', { outputFile: 'playwright-report/results.json' }]] : 
     'dot',
