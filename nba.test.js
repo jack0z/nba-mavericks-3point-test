@@ -14,7 +14,10 @@ const state = {
   seenMessages: new Set()
 };
 
-// Setup global log management to prevent duplicates
+/**
+ * Override console.log to prevent duplicate messages
+ * Filters common messages that appear multiple times when running in parallel
+ */
 const originalLog = console.log;
 console.log = function(...args) {
   const message = args.join(' ');
@@ -38,6 +41,11 @@ console.log = function(...args) {
 /**
  * Results file management functions
  */
+
+/**
+ * Creates a fresh results file with timestamp
+ * Called at the start of player tests to reset previous results
+ */
 function initializeResultsFile() {
   try {
     console.log(`Initializing results file at ${RESULTS_FILE}`);
@@ -53,6 +61,12 @@ function initializeResultsFile() {
   }
 }
 
+/**
+ * Saves a player's test result to the shared results file
+ * Includes retry logic to handle file contention in parallel execution
+ * @param {string} playerName - Name of the player
+ * @param {boolean} passed - Whether the player passed the 3PM criteria
+ */
 function saveResult(playerName, passed) {
   try {
     let retries = 5;
@@ -99,6 +113,10 @@ function saveResult(playerName, passed) {
   }
 }
 
+/**
+ * Reads the current results from the shared results file
+ * @returns {Object} Object containing passed and failed player arrays
+ */
 function getResults() {
   try {
     if (fs.existsSync(RESULTS_FILE)) {
@@ -118,6 +136,11 @@ function getResults() {
 
 test.describe('Dallas Mavericks Players 3-Pointer Test', () => {
   
+  /**
+   * Retrieves Dallas Mavericks players from the SportsData API
+   * Uses cached data if available to prevent redundant API calls
+   * @returns {Array} Array of player objects
+   */
   async function getPlayers() {
     if (state.playerData !== null) {
       return state.playerData;
@@ -155,6 +178,10 @@ test.describe('Dallas Mavericks Players 3-Pointer Test', () => {
     }
   }
   
+  /**
+   * Setup method that runs before all tests
+   * Initializes the results file and fetches player data
+   */
   test.beforeAll(async () => {
     state.seenMessages.clear();
     
@@ -169,6 +196,10 @@ test.describe('Dallas Mavericks Players 3-Pointer Test', () => {
     await getPlayers();
   });
   
+  /**
+   * Creates individual tests for each player (up to 20)
+   * Tests skip automatically if player index exceeds available players
+   */
   for (let playerIndex = 0; playerIndex < 20; playerIndex++) {
     test(`Player ${playerIndex + 1}`, async ({ page }) => {
       const players = await getPlayers();
@@ -201,6 +232,10 @@ test.describe('Dallas Mavericks Players 3-Pointer Test', () => {
     });
   }
   
+  /**
+   * Final summary test that runs separately after player tests
+   * Collects all results and generates a formatted summary report
+   */
   test('ZZZ_Summary Report @summary', async () => {
     const players = await getPlayers();
     const expectedResultCount = players.length;
@@ -256,6 +291,15 @@ test.describe('Dallas Mavericks Players 3-Pointer Test', () => {
     expect(sortedResults.passed.length + sortedResults.failed.length).toBeGreaterThanOrEqual(Math.floor(expectedResultCount / 2));
   }, { timeout: 120000 });
   
+  /**
+   * Extracts 3-point average from a player's NBA.com profile
+   * Handles cookie consent and navigation to the Profile tab
+   * @param {Page} page - Playwright page object
+   * @param {string} firstName - Player's first name
+   * @param {string} lastName - Player's last name
+   * @param {string} nbaDotComPlayerId - Player's NBA.com ID
+   * @returns {number} Average 3-pointers made in last 5 games
+   */
   async function get3PointAverageFromNBA(page, firstName, lastName, nbaDotComPlayerId) {
     const playerName = `${firstName} ${lastName}`;
     
@@ -394,6 +438,17 @@ test.describe('Dallas Mavericks Players 3-Pointer Test', () => {
   }
 });
 
+/**
+ * Formats and displays test results for a player
+ * Uses ANSI color codes for pass/fail display
+ * @param {string} firstName - Player's first name
+ * @param {string} lastName - Player's last name
+ * @param {string} playerId - Player's NBA.com ID
+ * @param {number} average3PM - Player's 3-point average
+ * @param {boolean} passed - Whether the player passed the criteria
+ * @param {number} playerNumber - Player's index number in the test sequence
+ * @returns {Object} Result object with player data
+ */
 function formatOutput(firstName, lastName, playerId, average3PM, passed, playerNumber) {
   const playerName = `${firstName} ${lastName}`;
   const averageFormatted = average3PM.toFixed(2);
