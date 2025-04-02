@@ -1,0 +1,24 @@
+{
+  "timestamp": "2025-04-02T20:53:35.801Z",
+  "passed": [
+    "Klay Thompson",
+    "Kyrie Irving",
+    "Spencer Dinwiddie",
+    "Dante Exum",
+    "P.J. Washington",
+    "Kessler Edwards",
+    "Jaden Hardy",
+    "Max Christie"
+  ],
+  "failed": [
+    "Anthony Davis",
+    "Dwight Powell",
+    "Daniel Gafford",
+    "Caleb Martin",
+    "Naji Marshall",
+    "Kai Jones",
+    "Brandon Williams",
+    "Dereck Lively II",
+    "Olivier-Maxence Prosper"
+  ]
+}
