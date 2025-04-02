@@ -22,7 +22,7 @@ function createParallelProjects(count = 1) {
  */
 module.exports = defineConfig({
   testDir: '.',
-  testMatch: '**/nba.test.js',
+  testMatch: '**/nba.test*.js',
   timeout: 120 * 1000,
   expect: {
     timeout: 10000
